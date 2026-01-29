@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Šachové stopky</title>
 
 <style>
@@ -36,7 +36,8 @@ input{
   padding:14px;
   border-radius:12px;
   border:1px solid rgba(255,255,255,.2);
-  background:#0003;color:white
+  background:#0003;color:white;
+  outline:none;
 }
 .btn{
   width:100%;
@@ -57,6 +58,9 @@ input{
   background:black;
   display:none;
   user-select:none;
+  -webkit-user-select:none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action:manipulation;
 }
 .half{
   height:50%;
@@ -70,25 +74,48 @@ input{
 .time{
   font-size:min(18vw,110px);
   font-weight:900;
-  font-variant-numeric:tabular-nums
+  font-variant-numeric:tabular-nums;
+  line-height:1;
 }
+
+/* Default: proti sobě — černý čas otočený o 180° */
 .black .time{transform:rotate(180deg)}
+
+/* Režim "stejná strana": oba časy otoč o 90° a černý už NEotáčej 180° */
+#clock.sameSide .time{ transform:rotate(90deg); }
+#clock.sameSide .black .time{ transform:rotate(90deg); } /* override */
 
 #center{
   position:absolute;
   left:50%;top:50%;
   transform:translate(-50%,-50%);
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:center;
+  z-index:10;
 }
-#pauseBtn{
-  padding:12px 18px;
+.ctrlBtn{
+  width:54px;
+  height:54px;
   border-radius:999px;
   border:1px solid rgba(255,255,255,.3);
-  background:rgba(15,23,41,.8);
+  background:rgba(15,23,41,.82);
   color:white;
   font-weight:900;
-  cursor:pointer
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:22px;
+  box-shadow:0 8px 20px rgba(0,0,0,.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
-#pauseBtn.play{background:#2a5cff}
+.ctrlBtn.playing{ background:rgba(15,23,41,.82); }
+.ctrlBtn.paused{ background:#2a5cff; border-color: rgba(255,255,255,.22); }
+
+#rotateBtn{ font-size:24px; }
 
 /* ===== OVERLAY ===== */
 #overlay{
@@ -98,13 +125,17 @@ input{
   background:rgba(0,0,0,.7);
   justify-content:center;
   align-items:center;
+  padding:20px;
+  z-index:100;
 }
 #overlay div{
   background:#0f1729;
   padding:20px;
   border-radius:16px;
   font-size:22px;
-  font-weight:800
+  font-weight:800;
+  text-align:center;
+  border:1px solid rgba(255,255,255,.14);
 }
 </style>
 </head>
@@ -114,147 +145,222 @@ input{
 <div id="setup">
   <div class="card">
     <h1>Šachové stopky</h1>
-    <label>Počet minut</label>
-    <input id="minutes" type="number" value="10" min="1">
+    <label for="minutes">Počet minut</label>
+    <input id="minutes" type="number" value="10" min="1" inputmode="numeric">
     <button class="btn" id="start">Start</button>
   </div>
 </div>
 
-<div id="clock">
+<div id="clock" aria-hidden="true">
   <div id="black" class="half black"><div id="tBlack" class="time">10:00</div></div>
   <div id="white" class="half white"><div id="tWhite" class="time">10:00</div></div>
 
   <div id="center">
-    <button id="pauseBtn">Pauza</button>
+    <button id="pauseBtn" class="ctrlBtn playing" type="button" aria-label="Pauza / Play">⏸</button>
+    <button id="rotateBtn" class="ctrlBtn" type="button" aria-label="Otočit časy">⟳</button>
   </div>
 </div>
 
 <div id="overlay"><div id="result"></div></div>
 
 <script>
-const setup=document.getElementById("setup");
-const clock=document.getElementById("clock");
-const startBtn=document.getElementById("start");
-const minutesEl=document.getElementById("minutes");
+(() => {
+  const setup=document.getElementById("setup");
+  const clock=document.getElementById("clock");
+  const startBtn=document.getElementById("start");
+  const minutesEl=document.getElementById("minutes");
 
-const whiteHalf=document.getElementById("white");
-const blackHalf=document.getElementById("black");
-const tWhite=document.getElementById("tWhite");
-const tBlack=document.getElementById("tBlack");
+  const whiteHalf=document.getElementById("white");
+  const blackHalf=document.getElementById("black");
+  const tWhite=document.getElementById("tWhite");
+  const tBlack=document.getElementById("tBlack");
 
-const pauseBtn=document.getElementById("pauseBtn");
-const overlay=document.getElementById("overlay");
-const result=document.getElementById("result");
+  const pauseBtn=document.getElementById("pauseBtn");
+  const rotateBtn=document.getElementById("rotateBtn");
 
-const INC=5000;
+  const overlay=document.getElementById("overlay");
+  const result=document.getElementById("result");
 
-let w,b,active=null,running=false,paused=false,last=0,raf;
+  const INC=5000;
 
-/* ===== helpers ===== */
-function fmt(ms){
-  ms=Math.max(0,ms);
-  let s=Math.floor(ms/1000);
-  return String(Math.floor(s/60)).padStart(2,"0")+":"+
-         String(s%60).padStart(2,"0");
-}
-function render(){
-  tWhite.textContent=fmt(w);
-  tBlack.textContent=fmt(b);
-}
+  let w=0, b=0;
+  let active=null;         // "white" | "black" | null
+  let running=false;
+  let paused=false;
+  let gameOver=false;
+  let last=0;
+  let raf=0;
 
-/* ===== screens ===== */
-function showSetup(){
-  cancelAnimationFrame(raf);
-  setup.style.display="flex";
-  clock.style.display="none";
-  overlay.style.display="none";
-  active=null;running=false;paused=false;
-}
+  let sameSide=false;
 
-function showClock(){
-  setup.style.display="none";
-  clock.style.display="block";
-}
-
-/* ===== game loop ===== */
-function tick(ts){
-  if(!running||paused||!active){
-    last=ts;
-    raf=requestAnimationFrame(tick);
-    return;
+  function fmt(ms){
+    ms=Math.max(0, ms);
+    const s=Math.floor(ms/1000);
+    const m=Math.floor(s/60);
+    const r=s%60;
+    return String(m).padStart(2,"0")+":"+String(r).padStart(2,"0");
   }
-  let dt=ts-last; last=ts;
-
-  if(active==="white"){
-    w-=dt;
-    if(w<=0) return end("Bílá prohrála – vyhrála černá");
-  }else{
-    b-=dt;
-    if(b<=0) return end("Černá prohrála – vyhrála bílá");
+  function render(){
+    tWhite.textContent=fmt(w);
+    tBlack.textContent=fmt(b);
   }
-  render();
-  raf=requestAnimationFrame(tick);
-}
 
-function end(text){
-  running=false;
-  overlay.style.display="flex";
-  result.textContent=text;
-}
+  function setPauseIcon(){
+    if (paused){
+      pauseBtn.textContent = "▶";
+      pauseBtn.classList.add("paused");
+      pauseBtn.classList.remove("playing");
+    } else {
+      pauseBtn.textContent = "⏸";
+      pauseBtn.classList.add("playing");
+      pauseBtn.classList.remove("paused");
+    }
+  }
 
-/* ===== controls ===== */
-startBtn.onclick=()=>{
-  let m=Math.max(1,minutesEl.value|0);
-  w=b=m*60000;
-  render();
+  function showSetup(){
+    cancelAnimationFrame(raf);
 
-  history.pushState({screen:"clock"}, "");
-  showClock();
+    running=false;
+    paused=false;
+    gameOver=false;
+    active=null;
+    last=0;
 
-  active=null;running=false;paused=false;
-  pauseBtn.textContent="Pauza";
-  cancelAnimationFrame(raf);
-  raf=requestAnimationFrame(tick);
-};
+    overlay.style.display="none";
+    clock.style.display="none";
+    clock.setAttribute("aria-hidden","true");
+    setup.style.display="flex";
 
-clock.addEventListener("pointerdown",()=>{
-  if(active||paused) return;
-  active="white";
-  running=true;
-  last=performance.now();
-});
+    setPauseIcon();
+  }
 
-whiteHalf.addEventListener("pointerdown",e=>{
-  if(active===null) return;
-  e.stopPropagation();
-  if(active!=="white"||paused) return;
-  w+=INC;
-  active="black";
-});
+  function showClock(){
+    setup.style.display="none";
+    clock.style.display="block";
+    clock.setAttribute("aria-hidden","false");
+  }
 
-blackHalf.addEventListener("pointerdown",e=>{
-  if(active===null) return;
-  e.stopPropagation();
-  if(active!=="black"||paused) return;
-  b+=INC;
-  active="white";
-});
+  function tick(ts){
+    if(gameOver){
+      return;
+    }
 
-pauseBtn.onclick=e=>{
-  e.stopPropagation();
-  paused=!paused;
-  pauseBtn.textContent=paused?"Play":"Pauza";
-  pauseBtn.classList.toggle("play",paused);
-  last=performance.now();
-};
+    if(!running || paused || !active){
+      last = ts;
+      raf = requestAnimationFrame(tick);
+      return;
+    }
 
-/* ===== BACK BUTTON ===== */
-history.replaceState({screen:"setup"}, "");
+    const dt = ts - last;
+    last = ts;
 
-window.addEventListener("popstate",()=>{
-  showSetup();
+    if(active==="white"){
+      w -= dt;
+      if(w<=0){
+        w=0; render();
+        return end("Bílá prohrála – vyhrála černá");
+      }
+    }else{
+      b -= dt;
+      if(b<=0){
+        b=0; render();
+        return end("Černá prohrála – vyhrála bílá");
+      }
+    }
+
+    render();
+    raf = requestAnimationFrame(tick);
+  }
+
+  function end(text){
+    gameOver = true;
+    running = false;
+    paused = false;
+    active = null;
+
+    setPauseIcon();
+
+    overlay.style.display="flex";
+    result.textContent=text;
+  }
+
+  function resetGame(minutes){
+    const ms = Math.max(1, minutes|0) * 60000;
+    w = ms; b = ms;
+    active=null;
+    running=false;
+    paused=false;
+    gameOver=false;
+    render();
+    setPauseIcon();
+  }
+
+  startBtn.addEventListener("click", () => {
+    resetGame(minutesEl.value);
+    history.pushState({screen:"clock"}, "");
+    showClock();
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(tick);
+  });
+
+  clock.addEventListener("pointerdown", () => {
+    if(gameOver) return;
+    if(paused) return;
+    if(active) return;
+    active="white";
+    running=true;
+    last = performance.now();
+  }, {passive:true});
+
+  whiteHalf.addEventListener("pointerdown", (e) => {
+    if(active===null) return; // allow first tap to bubble and start white
+    e.stopPropagation();
+    if(gameOver || paused) return;
+    if(active!=="white") return;
+
+    w += INC;
+    active="black";
+    last = performance.now();
+    render();
+  });
+
+  blackHalf.addEventListener("pointerdown", (e) => {
+    if(active===null) return;
+    e.stopPropagation();
+    if(gameOver || paused) return;
+    if(active!=="black") return;
+
+    b += INC;
+    active="white";
+    last = performance.now();
+    render();
+  });
+
+  pauseBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    if(gameOver) return;
+    paused = !paused;
+    last = performance.now();
+    setPauseIcon();
+  });
+
+  rotateBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    sameSide = !sameSide;
+    clock.classList.toggle("sameSide", sameSide);
+  });
+
   history.replaceState({screen:"setup"}, "");
-});
+
+  window.addEventListener("popstate", () => {
+    showSetup();
+    history.replaceState({screen:"setup"}, "");
+  });
+
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  showSetup();
+})();
 </script>
 
 </body>
