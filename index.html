@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Šachové stopky</title>
+
+<style>
+*{box-sizing:border-box}
+html,body{
+  margin:0;height:100%;
+  font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;
+  background:#0b1220;color:#e8eefc
+}
+button,input{font:inherit}
+
+/* ===== SETUP ===== */
+#setup{
+  height:100%;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  padding:20px
+}
+.card{
+  background:#121a2c;
+  padding:22px;
+  border-radius:18px;
+  width:min(520px,100%);
+  box-shadow:0 10px 30px rgba(0,0,0,.4)
+}
+h1{margin:0 0 18px;font-size:28px}
+label{display:block;margin-bottom:6px;color:#9fb0d6;font-weight:600}
+input{
+  width:100%;
+  padding:14px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.2);
+  background:#0003;color:white
+}
+.btn{
+  width:100%;
+  margin-top:14px;
+  padding:14px;
+  border-radius:12px;
+  border:0;
+  background:#2a5cff;
+  color:white;
+  font-weight:800;
+  cursor:pointer
+}
+
+/* ===== CLOCK ===== */
+#clock{
+  position:fixed;
+  inset:0;
+  background:black;
+  display:none;
+  user-select:none;
+}
+.half{
+  height:50%;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+}
+.white{background:white;color:black}
+.black{background:black;color:white}
+
+.time{
+  font-size:min(18vw,110px);
+  font-weight:900;
+  font-variant-numeric:tabular-nums
+}
+.black .time{transform:rotate(180deg)}
+
+#center{
+  position:absolute;
+  left:50%;top:50%;
+  transform:translate(-50%,-50%);
+}
+#pauseBtn{
+  padding:12px 18px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.3);
+  background:rgba(15,23,41,.8);
+  color:white;
+  font-weight:900;
+  cursor:pointer
+}
+#pauseBtn.play{background:#2a5cff}
+
+/* ===== OVERLAY ===== */
+#overlay{
+  position:fixed;
+  inset:0;
+  display:none;
+  background:rgba(0,0,0,.7);
+  justify-content:center;
+  align-items:center;
+}
+#overlay div{
+  background:#0f1729;
+  padding:20px;
+  border-radius:16px;
+  font-size:22px;
+  font-weight:800
+}
+</style>
+</head>
+
+<body>
+
+<div id="setup">
+  <div class="card">
+    <h1>Šachové stopky</h1>
+    <label>Počet minut</label>
+    <input id="minutes" type="number" value="10" min="1">
+    <button class="btn" id="start">Start</button>
+  </div>
+</div>
+
+<div id="clock">
+  <div id="black" class="half black"><div id="tBlack" class="time">10:00</div></div>
+  <div id="white" class="half white"><div id="tWhite" class="time">10:00</div></div>
+
+  <div id="center">
+    <button id="pauseBtn">Pauza</button>
+  </div>
+</div>
+
+<div id="overlay"><div id="result"></div></div>
+
+<script>
+const setup=document.getElementById("setup");
+const clock=document.getElementById("clock");
+const startBtn=document.getElementById("start");
+const minutesEl=document.getElementById("minutes");
+
+const whiteHalf=document.getElementById("white");
+const blackHalf=document.getElementById("black");
+const tWhite=document.getElementById("tWhite");
+const tBlack=document.getElementById("tBlack");
+
+const pauseBtn=document.getElementById("pauseBtn");
+const overlay=document.getElementById("overlay");
+const result=document.getElementById("result");
+
+const INC=5000;
+
+let w,b,active=null,running=false,paused=false,last=0,raf;
+
+/* ===== helpers ===== */
+function fmt(ms){
+  ms=Math.max(0,ms);
+  let s=Math.floor(ms/1000);
+  return String(Math.floor(s/60)).padStart(2,"0")+":"+
+         String(s%60).padStart(2,"0");
+}
+function render(){
+  tWhite.textContent=fmt(w);
+  tBlack.textContent=fmt(b);
+}
+
+/* ===== screens ===== */
+function showSetup(){
+  cancelAnimationFrame(raf);
+  setup.style.display="flex";
+  clock.style.display="none";
+  overlay.style.display="none";
+  active=null;running=false;paused=false;
+}
+
+function showClock(){
+  setup.style.display="none";
+  clock.style.display="block";
+}
+
+/* ===== game loop ===== */
+function tick(ts){
+  if(!running||paused||!active){
+    last=ts;
+    raf=requestAnimationFrame(tick);
+    return;
+  }
+  let dt=ts-last; last=ts;
+
+  if(active==="white"){
+    w-=dt;
+    if(w<=0) return end("Bílá prohrála – vyhrála černá");
+  }else{
+    b-=dt;
+    if(b<=0) return end("Černá prohrála – vyhrála bílá");
+  }
+  render();
+  raf=requestAnimationFrame(tick);
+}
+
+function end(text){
+  running=false;
+  overlay.style.display="flex";
+  result.textContent=text;
+}
+
+/* ===== controls ===== */
+startBtn.onclick=()=>{
+  let m=Math.max(1,minutesEl.value|0);
+  w=b=m*60000;
+  render();
+
+  history.pushState({screen:"clock"}, "");
+  showClock();
+
+  active=null;running=false;paused=false;
+  pauseBtn.textContent="Pauza";
+  cancelAnimationFrame(raf);
+  raf=requestAnimationFrame(tick);
+};
+
+clock.addEventListener("pointerdown",()=>{
+  if(active||paused) return;
+  active="white";
+  running=true;
+  last=performance.now();
+});
+
+whiteHalf.addEventListener("pointerdown",e=>{
+  if(active===null) return;
+  e.stopPropagation();
+  if(active!=="white"||paused) return;
+  w+=INC;
+  active="black";
+});
+
+blackHalf.addEventListener("pointerdown",e=>{
+  if(active===null) return;
+  e.stopPropagation();
+  if(active!=="black"||paused) return;
+  b+=INC;
+  active="white";
+});
+
+pauseBtn.onclick=e=>{
+  e.stopPropagation();
+  paused=!paused;
+  pauseBtn.textContent=paused?"Play":"Pauza";
+  pauseBtn.classList.toggle("play",paused);
+  last=performance.now();
+};
+
+/* ===== BACK BUTTON ===== */
+history.replaceState({screen:"setup"}, "");
+
+window.addEventListener("popstate",()=>{
+  showSetup();
+  history.replaceState({screen:"setup"}, "");
+});
+</script>
+
+</body>
+</html>
