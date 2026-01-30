@@ -145,8 +145,13 @@ input{
 <div id="setup">
   <div class="card">
     <h1>Šachové stopky</h1>
+
     <label for="minutes">Počet minut</label>
     <input id="minutes" type="number" value="10" min="1" inputmode="numeric">
+
+    <label for="incSec" style="margin-top:12px">Přičtení za tah (s)</label>
+    <input id="incSec" type="number" value="5" min="0" step="1" inputmode="numeric">
+
     <button class="btn" id="start">Start</button>
   </div>
 </div>
@@ -169,6 +174,7 @@ input{
   const clock=document.getElementById("clock");
   const startBtn=document.getElementById("start");
   const minutesEl=document.getElementById("minutes");
+  const incSecEl=document.getElementById("incSec");
 
   const whiteHalf=document.getElementById("white");
   const blackHalf=document.getElementById("black");
@@ -181,7 +187,7 @@ input{
   const overlay=document.getElementById("overlay");
   const result=document.getElementById("result");
 
-  const INC=5000;
+  let INC = 5000; // ms, nastavuje se při Start
 
   let w=0, b=0;
   let active=null;         // "white" | "black" | null
@@ -296,6 +302,10 @@ input{
   }
 
   startBtn.addEventListener("click", () => {
+    // načti increment v sekundách (0+), ulož do ms
+    const incSec = Math.max(0, (parseInt(incSecEl.value, 10) || 0));
+    INC = incSec * 1000;
+
     resetGame(minutesEl.value);
     history.pushState({screen:"clock"}, "");
     showClock();
